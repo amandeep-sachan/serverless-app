@@ -1,190 +1,202 @@
 org: sachan
-app: serverless-todos-app-app
 service:
-  name: serverless-todos-app
+  name: udacity-p4-serverless-application
 
 plugins:
   - serverless-webpack
   - serverless-iam-roles-per-function
-  - serverless-offline
-  - serverless-dynamodb-local
-  - serverless-plugin-canary-deployments
-
-deploymentSettings:
-  type: Linear10PercentEvery1Minute
-  alias: Live
-
-custom:
-  plugins:
-    - serverless-offline
-  serverless-offline:
-    port: 3003
-  dynamodb:
-    stages:
-      - ${self:provider.stage}
-    start:
-      port: 8000
-      inMemory: true
-      migrate: true
+  - serverless-reqvalidator-plugin
+  - serverless-aws-documentation
 
 provider:
-  tracing:
-    lambda: true
-    apiGateway: true
   name: aws
   runtime: nodejs8.10
-
+  tracing:
+    apiGateway : true
   stage: ${opt:stage, 'dev'}
-  region: ${opt:region, 'ap-southeast-1'}
+  region: ${opt:region, 'us-east-1'}
 
   environment:
-    AUTH_0_SECRET: lzfvHXLgjme_N8bK5BAMVn9LnESG7AJtI0-uIPxVf-KYK3WQ_MtLt7ZoR77vcNrt
-    AUTH_0_SECRET_ID: Auth0Secret-${self:provider.stage}
-    AUTH_0_SECRET_FIELD: auth0Secret
-    TODOS_TABLE: Todos-${self:provider.stage}
-    TODOS_TOKEN_INDEX: jwtsub
-    IMAGES_TABLE: Images-${self:provider.stage}
-    IMAGE_ID_INDEX: ImageIdIndex
-    IMAGES_S3_BUCKET: serverless-images-${self:provider.stage}
-    SIGNED_URL_EXPIRATION: 300
+    PROJECT_NAME: udacity-p4
+    TODOS_TABLE: udacity-p4-serverless-application-todo-${self:provider.stage}
+    S3_BUCKET_NAME: udacity-p4-serverless-application-todo-${self:provider.stage}
+
+custom:
+  documentation:
+    api:
+      info:
+        version: '1.0.0'
+        title: udacity-p4-serverless-application-todo-api
+        description: udacity-p4-serverless-application-todo-api
+    models:
+      - name: CreateTodoRequest
+        contentType: "application/json"
+        schema:
+          required:
+            - name
+            - dueDate
+          properties:
+            name:
+              type: string
+            dueDate:
+              type: string
+      - name: UpdateTodoRequest
+        contentType: "application/json"
+        schema:
+          required:
+            - name
+            - dueDate
+            - done
+          properties:
+            name:
+              type: string
+            dueDate:
+              type: string
+            done:
+              type: boolean
 
 functions:
 
   Auth:
     handler: src/lambda/auth/auth0Authorizer.handler
 
+  # TODO: Configure this function
   GetTodos:
     handler: src/lambda/http/getTodos.handler
     events:
       - http:
           method: get
           path: todos
-          authorizer: Auth
           cors: true
+          authorizer: Auth
+    iamRoleStatementsName: ${self:provider.environment.PROJECT_NAME}-get-todo-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Query
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
 
+  # TODO: Configure this function
   CreateTodo:
     handler: src/lambda/http/createTodo.handler
     events:
       - http:
           method: post
           path: todos
-          authorizer: Auth
           cors: true
+          authorizer: Auth
+          documentation:
+            summary: "Create a new todo item"
+            description: "Create a new todo item"
+            requestModels:
+              "application/json": CreateTodoRequest
+          reqValidatorName: onlyBody
+    iamRoleStatementsName: ${self:provider.environment.PROJECT_NAME}-create-todo-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
 
+
+  # TODO: Configure this function
   UpdateTodo:
     handler: src/lambda/http/updateTodo.handler
     events:
       - http:
           method: patch
           path: todos/{todoId}
-          authorizer: Auth
           cors: true
+          authorizer: Auth
+          documentation:
+            summary: "Update a todo item"
+            description: "Update a todo item"
+            requestModels:
+              "application/json": UpdateTodoRequest
+          reqValidatorName: onlyBody
+    iamRoleStatementsName: ${self:provider.environment.PROJECT_NAME}-update-todo-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
 
+  # TODO: Configure this function
   DeleteTodo:
     handler: src/lambda/http/deleteTodo.handler
     events:
       - http:
           method: delete
           path: todos/{todoId}
-          authorizer: Auth
           cors: true
+          authorizer: Auth
+    iamRoleStatementsName: ${self:provider.environment.PROJECT_NAME}-delete-todo-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:DeleteItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
 
+  # TODO: Configure this function
   GenerateUploadUrl:
     handler: src/lambda/http/generateUploadUrl.handler
     events:
       - http:
           method: post
           path: todos/{todoId}/attachment
-          authorizer: Auth
           cors: true
+          authorizer: Auth
+    iamRoleStatementsName: ${self:provider.environment.PROJECT_NAME}-s3-upload-role-${self:provider.stage}
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - s3:*
+        Resource: arn:aws:s3:::${self:provider.environment.S3_BUCKET_NAME}/*
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TODOS_TABLE}
 
 resources:
   Resources:
-    GatewayResponseDefault4XX:
-      Type: AWS::ApiGateway::GatewayResponse
-      Properties:
-        ResponseParameters:
-          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
-          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
-          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
-        ResponseType: DEFAULT_4XX
-        RestApiId:
-          Ref: ApiGatewayRestApi
-    TodosDynamoDBTable:
+    # TODO: Add any necessary AWS resources
+    TodosTable:
       Type: AWS::DynamoDB::Table
       Properties:
         AttributeDefinitions:
-          - AttributeName: todoId
+          - AttributeName: userId
             AttributeType: S
-          - AttributeName: jwtsub
+          - AttributeName: todoId
             AttributeType: S
         KeySchema:
-          - AttributeName: todoId
+          - AttributeName: userId
             KeyType: HASH
-        BillingMode: PAY_PER_REQUEST
-        TableName: ${self:provider.environment.TODOS_TABLE}
-        GlobalSecondaryIndexes:
-          - IndexName: ${self:provider.environment.TODOS_TOKEN_INDEX}
-            KeySchema:
-            - AttributeName: jwtsub
-              KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-    ImagesDynamoDBTable:
-      Type: "AWS::DynamoDB::Table"
-      Properties:
-        AttributeDefinitions:
           - AttributeName: todoId
-            AttributeType: S
-          - AttributeName: timestamp
-            AttributeType: S
-          - AttributeName: imageId
-            AttributeType: S
-        KeySchema:
-          - AttributeName: todoId
-            KeyType: HASH
-          - AttributeName: timestamp
             KeyType: RANGE
         BillingMode: PAY_PER_REQUEST
-        StreamSpecification:
-          StreamViewType: NEW_IMAGE
-        TableName: ${self:provider.environment.IMAGES_TABLE}
-        GlobalSecondaryIndexes:
-          - IndexName: ${self:provider.environment.IMAGE_ID_INDEX}
-            KeySchema:
-            - AttributeName: imageId
-              KeyType: HASH
-            Projection:
-              ProjectionType: ALL
-    ThumbnailsBucket:
+        TableName: ${self:provider.environment.TODOS_TABLE}
+    onlyBody:
+      Type: "AWS::ApiGateway::RequestValidator"
+      Properties:
+        Name: 'only-body'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+    AttachmentsBucket:
       Type: AWS::S3::Bucket
       Properties:
-        BucketName: ${self:provider.environment.IMAGES_S3_BUCKET}
+        BucketName: ${self:provider.environment.S3_BUCKET_NAME}
         CorsConfiguration:
           CorsRules:
-            -
-              AllowedOrigins:
+            - AllowedOrigins:
                 - '*'
               AllowedHeaders:
                 - '*'
               AllowedMethods:
-                - GET
                 - PUT
-                - POST
-                - DELETE
-                - HEAD
-              MaxAge: 3000
-        ## Specifying the policies to make sure all files inside the Bucket are avaialble to CloudFront
-    ThumbnailsBucketPolicy:
-      Type: AWS::S3::BucketPolicy
-      Properties:
-        Bucket:
-          Ref: ThumbnailsBucket
-        PolicyDocument:
-          Statement:
-            - Sid: PublicReadGetObject
-              Effect: Allow
-              Principal: "*"
-              Action:
-              - s3:GetObject
-              Resource: arn:aws:s3:::${self:provider.environment.IMAGES_S3_BUCKET}/*
+              MaxAge: 300
